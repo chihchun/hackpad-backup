@@ -1,3 +1,6 @@
+#!/usr/bin/python
+import logging
+
 import os
 import subprocess
 import urllib
@@ -9,7 +12,8 @@ import sys
 import requests
 from requests_oauthlib import OAuth1Session
 
-g_format = 'html'
+g_logger = None;
+g_format = 'txt'
 g_timezone = '+0800'
 g_delay = 1
 
@@ -48,11 +52,11 @@ class Hackpad:
         self.hackpad = OAuth1Session(*api_keys[site])
 
     def _get(self, url):
-        print url
+        g_logger.debug(url);
         for i in range(5):
             r = self.hackpad.get(url)
             if r.status_code not in (200, 401):
-                print 'status_code:', r.status_code, ', content:', r.content
+                g_logger.warn('status_code:', r.status_code, ', content:', r.content);
                 time.sleep(2)
                 continue
             break
@@ -70,7 +74,6 @@ class Hackpad:
             url = self.base + '/api/1.0/pad/%s/content.%s' % (padid, format)
 
         r = self._get(url)
-        print r.content
         return r.content
 
     def list_updated_pads(self, timestamp):
@@ -89,7 +92,7 @@ class Hackpad:
         try:
             o = json.loads(r.text)
         except ValueError:
-            print r.text
+            g_logger.error(r.text);
             raise
         if 'success' in o and not o['success']:
             if o['error'] == 'Not found':  # maybe real "Not found", maybe no access right
@@ -136,7 +139,7 @@ class Storage:
     def _git_log(self, padid=None):
         if padid is None:
             cmd = 'cd %s && git log -n 1 --pretty="format:%%B"' % (self.base)
-            print cmd
+            g_logger.debug(cmd);
             try:
                 output = subprocess.check_output(cmd, shell=True)
             except subprocess.CalledProcessError:
@@ -147,7 +150,7 @@ class Storage:
                 return None
 
             cmd = 'cd %s && git log -n 1 --pretty="format:%%B" -- "%s"' % (self.base, self._get_store_filename(padid))
-            print cmd
+            g_logger.debug(cmd);
             output = subprocess.check_output(cmd, shell=True)
         return output
 
@@ -155,7 +158,7 @@ class Storage:
         log = self._git_log()
         if log is None:
             return 0
-        print repr(log)
+        g_logger.debug(log)
         m = re.search('^timestamp (\d+(?:\.\d+)?)$', log, re.M)
         if not m:
             return 0
@@ -184,12 +187,11 @@ class Storage:
         with open(path, 'w') as f:
             f.write(content)
 
-
         fn = self._get_store_filename(padid)
         cmd = 'cd %s && git add -- "%s" && git commit --date="%s" -a -F -' % (
                 self.base, fn, datestr)
-        print cmd
-        print msg.encode('utf8')
+        g_logger.debug(cmd)
+        g_logger.debug (msg.encode('utf8'))
         p = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE)
         stdout, stderr = p.communicate(msg.encode('utf8'))
         assert p.returncode == 0
@@ -236,10 +238,10 @@ def backup_site(site):
         storage.verify_padid(padid)
 
     for padid in padids:
-        print padid
+        g_logger.debug("processing %s" % padid);
 
         if re.match(r'^[.]', padid):
-            print >> sys.stderr, "I don't like this padid: %s" % padid
+            logger.error("I don't like this padid: %s" % padid)
             continue
 
         last_version = storage.get_version(padid)
@@ -258,7 +260,7 @@ def backup_site(site):
             if rev['timestamp'] > now - 60:
                 continue
 
-            print rev
+            g_logger.debug(rev);
 
             content = hackpad.get_pad_content(padid, format=g_format, revision=rev['endRev'])
 
@@ -267,6 +269,7 @@ def backup_site(site):
 
         if g_out_of_order_commit:
             storage.commit()
+
     storage.commit()
 
 def run_backup():
@@ -274,7 +277,6 @@ def run_backup():
         line = re.sub('#.*', '', line).strip()
         if not line:
             continue
-        print 'line', line
         site, item = line.split('/')
         assert re.match(re_site, site)
 
@@ -289,4 +291,14 @@ def main():
     run_backup()
 
 if __name__ == '__main__':
+    # create console handler and set level to debug
+    ch = logging.StreamHandler()
+    # add formatter to ch
+    ch.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    g_logger = logging.getLogger('console')
+    g_logger.setLevel(logging.DEBUG)
+    g_logger.addHandler(ch)
+
+    # g_logger.setLevel(logging.DEBUG)
+    # g_logger.setLevel(logging.INFO)
     main()
